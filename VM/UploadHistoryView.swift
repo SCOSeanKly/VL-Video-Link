@@ -17,6 +17,11 @@ struct UploadHistoryView: View {
     @State private var showDeleteError = false
     @State private var deleteErrorMessage = ""
     
+    // Multi-selection states
+    @State private var isEditMode = false
+    @State private var selectedVideos: Set<String> = []
+    @State private var showBulkDeleteConfirmation = false
+    
     private var filteredVideos: [CloudflareVideo] {
         historyService.search(query: searchText)
     }
@@ -26,81 +31,87 @@ struct UploadHistoryView: View {
             ZStack {
                 VStack(spacing: 0) {
                     // Device filter indicator banner
-                    if historyService.showAllDevices {
-                        HStack(spacing: 12) {
-                            Image(systemName: "globe")
-                                .font(.title3)
-                                .foregroundStyle(.orange)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Viewing All Devices")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
+                    Group {
+                        if historyService.showAllDevices {
+                            HStack(spacing: 12) {
+                                Image(systemName: "globe")
+                                    .font(.title3)
+                                    .foregroundStyle(.orange)
                                 
-                                Text("Showing uploads from all devices")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Viewing All Devices")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                    
+                                    Text("Showing uploads from all devices")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(.green)
                             }
-                            
-                            Spacer()
-                            
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.title3)
-                                .foregroundStyle(.green)
-                        }
-                        .padding()
-                        .background(
-                            LinearGradient(
-                                colors: [Color.orange.opacity(0.15), Color.purple.opacity(0.15)],
-                                startPoint: .leading,
-                                endPoint: .trailing
+                            .padding()
+                            .background(
+                                LinearGradient(
+                                    colors: [Color.orange.opacity(0.15), Color.purple.opacity(0.15)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
                             )
-                        )
-                        .overlay(
-                            Rectangle()
-                                .frame(height: 1)
-                                .foregroundColor(.orange.opacity(0.3)),
-                            alignment: .bottom
-                        )
-                    } else {
-                        HStack(spacing: 12) {
-                            Image(systemName: "iphone")
-                                .font(.title3)
-                                .foregroundStyle(.blue)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("This Device Only")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
+                            .overlay(
+                                Rectangle()
+                                    .frame(height: 1)
+                                    .foregroundColor(.orange.opacity(0.3)),
+                                alignment: .bottom
+                            )
+                        } else {
+                            HStack(spacing: 12) {
+                                Image(systemName: "iphone")
+                                    .font(.title3)
+                                    .foregroundStyle(.blue)
                                 
-                                Text("Device ID: \(historyService.currentDeviceID)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .monospaced()
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("This Device Only")
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                    
+                                    Text("Device ID: \(historyService.currentDeviceID)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .monospaced()
+                                }
+                                
+                                Spacer()
                             }
-                            
-                            Spacer()
+                            .padding()
+                            .background(Color.blue.opacity(0.1))
+                            .overlay(
+                                Rectangle()
+                                    .frame(height: 1)
+                                    .foregroundColor(.blue.opacity(0.3)),
+                                alignment: .bottom
+                            )
                         }
-                        .padding()
-                        .background(Color.blue.opacity(0.1))
-                        .overlay(
-                            Rectangle()
-                                .frame(height: 1)
-                                .foregroundColor(.blue.opacity(0.3)),
-                            alignment: .bottom
-                        )
                     }
+                    .fixedSize(horizontal: false, vertical: true)
                     
                     // Main content
-                    if historyService.isLoading && historyService.videos.isEmpty {
-                        loadingView
-                    } else if let errorMessage = historyService.errorMessage, historyService.videos.isEmpty {
-                        errorView(message: errorMessage)
-                    } else if filteredVideos.isEmpty {
-                        emptyStateView
-                    } else {
-                        videosList
+                    Group {
+                        if historyService.isLoading && historyService.videos.isEmpty {
+                            loadingView
+                        } else if let errorMessage = historyService.errorMessage, historyService.videos.isEmpty {
+                            errorView(message: errorMessage)
+                        } else if filteredVideos.isEmpty {
+                            emptyStateView
+                        } else {
+                            videosList
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 
                 // Delete progress overlay
@@ -118,14 +129,60 @@ struct UploadHistoryView: View {
                 }
                 
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: {
-                        Task {
-                            await historyService.refresh()
+                    Group {
+                        if isEditMode {
+                            Button("Cancel") {
+                                isEditMode = false
+                                selectedVideos.removeAll()
+                            }
+                        } else if historyService.videos.isEmpty {
+                            Button(action: {
+                                Task {
+                                    await historyService.refresh()
+                                }
+                            }) {
+                                if historyService.isLoading {
+                                    ProgressView()
+                                        .frame(width: 20, height: 20)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .frame(width: 20, height: 20)
+                                }
+                            }
+                            .disabled(historyService.isLoading)
+                        } else {
+                            Menu {
+                                Button(action: {
+                                    isEditMode = true
+                                }) {
+                                    Label("Select Videos", systemImage: "checkmark.circle")
+                                }
+                                
+                                Button(action: {
+                                    Task {
+                                        await historyService.refresh()
+                                    }
+                                }) {
+                                    Label("Refresh", systemImage: "arrow.clockwise")
+                                }
+                                .disabled(historyService.isLoading)
+                            } label: {
+                                if historyService.isLoading {
+                                    ProgressView()
+                                        .frame(width: 20, height: 20)
+                                } else {
+                                    Image(systemName: "ellipsis.circle")
+                                        .frame(width: 20, height: 20)
+                                }
+                            }
+                            .disabled(historyService.isLoading)
                         }
-                    }) {
-                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
-                    .disabled(historyService.isLoading)
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if isEditMode && !selectedVideos.isEmpty {
+                    bulkActionBar
                 }
             }
             .searchable(text: $searchText, prompt: "Search by reference or filename")
@@ -145,6 +202,16 @@ struct UploadHistoryView: View {
                 }
             } message: { video in
                 Text("Are you sure you want to delete '\(video.reference)'? This action cannot be undone.")
+            }
+            .alert("Delete Videos", isPresented: $showBulkDeleteConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete \(selectedVideos.count)", role: .destructive) {
+                    Task {
+                        await deleteBulkVideos()
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to delete \(selectedVideos.count) video(s)? This action cannot be undone.")
             }
             .alert("Delete Failed", isPresented: $showDeleteError) {
                 Button("OK", role: .cancel) { }
@@ -180,7 +247,7 @@ struct UploadHistoryView: View {
                     .scaleEffect(1.5)
                     .tint(.primary)
                 
-                Text("Deleting video...")
+                Text(selectedVideos.count > 1 ? "Deleting \(selectedVideos.count) videos..." : "Deleting video...")
                     .font(.headline)
                     .foregroundStyle(.primary)
                 
@@ -192,6 +259,51 @@ struct UploadHistoryView: View {
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 20))
             .shadow(radius: 20)
+        }
+    }
+    
+    // MARK: - Bulk Action Bar
+    
+    private var bulkActionBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(selectedVideos.count) Selected")
+                        .font(.headline)
+                    
+                    if !filteredVideos.isEmpty {
+                        Button(action: {
+                            if selectedVideos.count == filteredVideos.count {
+                                selectedVideos.removeAll()
+                            } else {
+                                selectedVideos = Set(filteredVideos.map { $0.id })
+                            }
+                        }) {
+                            Text(selectedVideos.count == filteredVideos.count ? "Deselect All" : "Select All")
+                                .font(.caption)
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    showBulkDeleteConfirmation = true
+                }) {
+                    Label("Delete", systemImage: "trash")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(Color.red)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .padding()
+            .background(.ultraThinMaterial)
         }
     }
     
@@ -212,6 +324,41 @@ struct UploadHistoryView: View {
             showDeleteError = true
             
             // Haptic feedback on error
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+        }
+        
+        isDeleting = false
+    }
+    
+    // MARK: - Bulk Delete Function
+    
+    private func deleteBulkVideos() async {
+        isDeleting = true
+        
+        let videosToDelete = filteredVideos.filter { selectedVideos.contains($0.id) }
+        var failedDeletions: [String] = []
+        
+        for video in videosToDelete {
+            do {
+                try await historyService.deleteVideo(video)
+            } catch {
+                failedDeletions.append(video.reference)
+            }
+        }
+        
+        // Reset selection and edit mode
+        selectedVideos.removeAll()
+        isEditMode = false
+        
+        // Show feedback
+        if failedDeletions.isEmpty {
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+        } else {
+            deleteErrorMessage = "Failed to delete: \(failedDeletions.joined(separator: ", "))"
+            showDeleteError = true
+            
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.error)
         }
@@ -276,19 +423,42 @@ struct UploadHistoryView: View {
     // MARK: - Videos List
     
     private var videosList: some View {
-        List {
-            ForEach(filteredVideos) { video in
-                CloudflareVideoRow(
-                    video: video,
-                    onDelete: {
-                        videoToDelete = video
-                        showDeleteConfirmation = true
+        ZStack(alignment: .bottom) {
+            List {
+                ForEach(filteredVideos) { video in
+                    if isEditMode {
+                        CloudflareVideoRow(
+                            video: video,
+                            isEditMode: true,
+                            isSelected: selectedVideos.contains(video.id),
+                            onToggleSelection: {
+                                if selectedVideos.contains(video.id) {
+                                    selectedVideos.remove(video.id)
+                                } else {
+                                    selectedVideos.insert(video.id)
+                                }
+                            },
+                            onDelete: {
+                                videoToDelete = video
+                                showDeleteConfirmation = true
+                            }
+                        )
+                    } else {
+                        CloudflareVideoRow(
+                            video: video,
+                            isEditMode: false,
+                            isSelected: false,
+                            onToggleSelection: {},
+                            onDelete: {
+                                videoToDelete = video
+                                showDeleteConfirmation = true
+                            }
+                        )
                     }
-                )
+                }
             }
-        }
-        .listStyle(.insetGrouped)
-        .overlay(alignment: .bottom) {
+            .listStyle(.insetGrouped)
+            
             if historyService.isLoading {
                 ProgressView()
                     .padding()
@@ -304,100 +474,123 @@ struct UploadHistoryView: View {
 
 struct CloudflareVideoRow: View {
     let video: CloudflareVideo
+    let isEditMode: Bool
+    let isSelected: Bool
+    let onToggleSelection: () -> Void
     let onDelete: () -> Void
     
     @State private var showShareSheet = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header with reference and date
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(video.reference)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                            .font(.caption2)
-                        Text(video.formattedDate)
-                            .font(.caption)
+        HStack(spacing: 12) {
+            // Selection indicator in edit mode
+            if isEditMode {
+                Button(action: onToggleSelection) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundStyle(isSelected ? .blue : .gray)
+                }
+                .buttonStyle(.plain)
+            }
+            
+            VStack(alignment: .leading, spacing: 12) {
+                // Header with reference and date
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(video.reference)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                                .font(.caption2)
+                            Text(video.formattedDate)
+                                .font(.caption)
+                        }
+                        .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.secondary)
+                    
+                    Spacer()
                 }
                 
-                Spacer()
-            }
-            
-            // File info
-            HStack(spacing: 4) {
-                Image(systemName: "doc.fill")
+                // File info
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.fill")
+                        .font(.caption2)
+                    Text(video.formattedSize)
+                        .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+                
+                // Download link preview
+                Text(video.downloadURL)
                     .font(.caption2)
-                Text(video.formattedSize)
-                    .font(.caption)
-            }
-            .foregroundStyle(.secondary)
-            
-            // Download link preview
-            Text(video.downloadURL)
-                .font(.caption2)
-                .lineLimit(1)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.gray.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            
-            // Action buttons
-            HStack(spacing: 8) {
-                Button(action: {
-                    UIPasteboard.general.string = video.downloadURL
-                    
-                    // Haptic feedback
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
-                }) {
-                    Label("Copy", systemImage: "doc.on.doc")
-                        .font(.caption)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-                .buttonStyle(.plain)
+                    .lineLimit(1)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.gray.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 
-                Button(action: {
-                    // Haptic feedback
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
-                    
-                    shareLink()
-                }) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                        .font(.caption)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.green)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                // Action buttons (hidden in edit mode)
+                if !isEditMode {
+                    HStack(spacing: 8) {
+                        Button(action: {
+                            UIPasteboard.general.string = video.downloadURL
+                            
+                            // Haptic feedback
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
+                        }) {
+                            Label("Copy", systemImage: "doc.on.doc")
+                                .font(.caption)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(Color.blue)
+                                .foregroundStyle(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            // Haptic feedback
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
+                            
+                            shareLink()
+                        }) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                                .font(.caption)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(Color.green)
+                                .foregroundStyle(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            onDelete()
+                        }) {
+                            Label("Delete", systemImage: "trash")
+                                .font(.caption)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(Color.red)
+                                .foregroundStyle(.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
-                
-                Button(action: {
-                    onDelete()
-                }) {
-                    Label("Delete", systemImage: "trash")
-                        .font(.caption)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.red)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if isEditMode {
+                onToggleSelection()
+            }
+        }
     }
     
     private func shareLink() {
