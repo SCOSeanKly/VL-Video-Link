@@ -43,7 +43,7 @@ actor VideoUploadService {
             throw UploadError.serverError
         }
         
-        let result = try JSONDecoder().decode(UploadResponse.self, from: responseData)
+        let result = try JSONDecoder().decode(VideoUploadResponse.self, from: responseData)
         return result.downloadURL
     }
     
@@ -66,7 +66,7 @@ actor VideoUploadService {
 
 // MARK: - Response Model
 
-struct UploadResponse: Codable {
+struct VideoUploadResponse: Codable {
     let downloadURL: String
     let fileId: String?
     let expiresAt: Date?

@@ -23,10 +23,77 @@ struct SubscriptionPaywallView: View {
         !uploadManager.hasReachedLimit || storeManager.subscriptionStatus.isActive
     }
     
+    // Debug status text
+    private var debugStatusText: String {
+        switch storeManager.subscriptionStatus {
+        case .unknown:
+            return "Unknown"
+        case .notSubscribed:
+            return "Not Subscribed"
+        case .subscribed(let date):
+            if let date = date {
+                return "Subscribed (expires: \(date.formatted(date: .abbreviated, time: .omitted)))"
+            } else {
+                return "Subscribed"
+            }
+        case .expired:
+            return "Expired"
+        case .inGracePeriod:
+            return "Grace Period"
+        }
+    }
+    
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 32) {
+                    // Already subscribed banner (if active)
+                    if storeManager.subscriptionStatus.isActive {
+                        VStack(spacing: 12) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundStyle(.green)
+                            
+                            Text("You're Already Subscribed!")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                            
+                            Text("You have unlimited access to all features.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                            
+                            Button(action: {
+                                Task {
+                                    await storeManager.showManageSubscriptions()
+                                }
+                            }) {
+                                HStack {
+                                    Image(systemName: "gear")
+                                    Text("Manage Subscription")
+                                }
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 12)
+                                .background(Color.blue)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
+                            .padding(.top, 8)
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.green.opacity(0.1))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .strokeBorder(Color.green.opacity(0.3), lineWidth: 2)
+                                )
+                        )
+                        .padding(.horizontal, 24)
+                        .padding(.top, 20)
+                    }
+                    
                     // Header
                     VStack(spacing: 16) {
                         Image("vmlogo")
@@ -196,6 +263,43 @@ struct SubscriptionPaywallView: View {
                     }
                     .disabled(storeManager.isLoading || isPurchasing)
                     .padding(.top, 8)
+                    
+                    // Debug info (helpful for troubleshooting)
+                    #if DEBUG
+                    VStack(spacing: 8) {
+                        Text("Debug Info")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
+                        
+                        Text("Status: \(debugStatusText)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        HStack(spacing: 12) {
+                            Button("Refresh Status") {
+                                Task {
+                                    print("🔄 Manual status refresh requested")
+                                    await storeManager.updateSubscriptionStatus()
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            
+                            Button("Print All Transactions") {
+                                Task {
+                                    await storeManager.debugPrintAllTransactions()
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.purple)
+                        }
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal)
+                    #endif
                     
                     // Terms and Privacy
                     HStack(spacing: 16) {

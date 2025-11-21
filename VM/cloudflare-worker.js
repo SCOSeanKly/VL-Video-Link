@@ -56,14 +56,14 @@ export default {
     try {
       // Parse form data
       const formData = await request.formData();
-      const video = formData.get('video');
+      const file = formData.get('video') || formData.get('file'); // Accept both field names
       const reference = formData.get('reference');
-      const deviceId = formData.get('deviceId'); // NEW: Get device ID from client
+      const deviceId = formData.get('deviceId');
       
       // Validate inputs
-      if (!video) {
+      if (!file) {
         return new Response(JSON.stringify({
-          error: 'No video file provided'
+          error: 'No file provided'
         }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -81,40 +81,57 @@ export default {
 
       // Validate file size (100 MB limit)
       const maxSize = 100 * 1024 * 1024;
-      if (video.size > maxSize) {
+      if (file.size > maxSize) {
         return new Response(JSON.stringify({
           error: 'File too large',
-          message: 'Video must be under 100 MB'
+          message: 'File must be under 100 MB'
         }), {
           status: 413,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
+      // Get original file extension (supports .mp4, .mov, .jpg, .jpeg, .png, .zip)
+      const originalFileName = file.name || 'upload';
+      const fileExt = originalFileName.split('.').pop() || 'bin';
+      
       // Generate filename with device ID if provided
       const sanitizedReference = reference.trim().replace(/[^a-zA-Z0-9-_]/g, '-');
       const timestamp = Date.now();
       const randomId = crypto.randomUUID().substring(0, 8);
       
-      // NEW: Include device ID in filename if provided
+      // Include device ID in filename if provided
       let fileName;
       if (deviceId && deviceId.trim() !== '') {
-        fileName = `${sanitizedReference}-${timestamp}-${randomId}_${deviceId.trim()}.mov`;
+        fileName = `${sanitizedReference}-${timestamp}-${randomId}_${deviceId.trim()}.${fileExt}`;
       } else {
-        fileName = `${sanitizedReference}-${timestamp}-${randomId}.mov`;
+        fileName = `${sanitizedReference}-${timestamp}-${randomId}.${fileExt}`;
       }
       
-      console.log(`📁 Generated filename: ${fileName}`);
+      console.log(`📁 Generated filename: ${fileName} (extension: ${fileExt})`);
 
-      // Upload to R2
-      await env.VIDEO_BUCKET.put(fileName, video.stream(), {
+      // Determine content type based on extension
+      const contentTypes = {
+        'mp4': 'video/mp4',
+        'mov': 'video/quicktime',
+        'm4v': 'video/x-m4v',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'png': 'image/png',
+        'zip': 'application/zip'
+      };
+      const contentType = contentTypes[fileExt.toLowerCase()] || 'application/octet-stream';
+
+      // Upload to R2 with correct content type
+      await env.VIDEO_BUCKET.put(fileName, file.stream(), {
         httpMetadata: {
-          contentType: 'video/quicktime',
+          contentType: contentType,
         },
         customMetadata: {
           uploadedAt: new Date().toISOString(),
-          fileSize: video.size.toString(),
+          fileSize: file.size.toString(),
           reference: reference.trim(),
+          fileType: fileExt,
         }
       });
 
@@ -129,6 +146,11 @@ export default {
         console.log('📧 Sending email notification...');
         console.log('Using private key for server-side API call');
         
+        // Determine file type for email
+        const fileTypeLabel = ['mp4', 'mov', 'm4v'].includes(fileExt.toLowerCase()) ? 'Video' : 
+                             ['jpg', 'jpeg', 'png'].includes(fileExt.toLowerCase()) ? 'Photo' :
+                             fileExt.toLowerCase() === 'zip' ? 'Photos (ZIP)' : 'File';
+        
         // Build email payload with PRIVATE KEY (required for server-side calls)
         const emailPayload = {
           service_id: 'service_uhfejsl',
@@ -142,7 +164,8 @@ export default {
               dateStyle: 'medium',
               timeStyle: 'short'
             }),
-            file_size: formatBytes(video.size),
+            file_size: formatBytes(file.size),
+            file_type: fileTypeLabel, // NEW: Include file type in email
           }
         };
 
@@ -188,7 +211,7 @@ export default {
         success: true,
         download_url: downloadURL,
         file_id: fileName,
-        file_size: video.size,
+        file_size: file.size,
         uploaded_at: new Date().toISOString(),
         email_sent: emailSent,
         email_error: emailError,
@@ -226,8 +249,12 @@ async function handleListVideos(env, corsHeaders) {
 
     // Map R2 objects to a clean response format
     const videos = listed.objects.map(obj => {
-      // Parse the filename to extract reference (assuming format: reference-timestamp-uuid.mov)
-      const fileNameParts = obj.key.replace('.mov', '').split('-');
+      // Get file extension
+      const fileExt = obj.key.split('.').pop() || '';
+      
+      // Parse the filename to extract reference (format: reference-timestamp-uuid.ext)
+      const fileNameWithoutExt = obj.key.replace(`.${fileExt}`, '');
+      const fileNameParts = fileNameWithoutExt.split('-');
       const reference = fileNameParts.slice(0, -2).join('-'); // Everything except timestamp and uuid
       
       return {

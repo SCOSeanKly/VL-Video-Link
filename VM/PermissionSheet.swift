@@ -97,7 +97,7 @@ fileprivate struct PermissionSheetViewModifier: ViewModifier {
                         .font(.brandTitle)
                         .fontWeight(.bold)
                     
-                    Text("VL needs access to your photo library, camera, and microphone so you can import, record, and share video links.")
+                    Text("VL needs access to your photo library, camera, and microphone so you can import, record, and share media links.")
                         .font(.brandBody)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

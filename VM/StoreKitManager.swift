@@ -200,20 +200,34 @@ final class StoreKitManager: ObservableObject {
     
     /// Purchase a subscription product
     func purchase(_ product: Product) async throws {
+        print("🛒 Starting purchase for product: \(product.id)")
+        
+        // First check if already subscribed
+        if subscriptionStatus.isActive {
+            print("⚠️ User already has an active subscription!")
+            self.errorMessage = "You already have an active subscription. Use 'Manage Subscription' to make changes."
+            return
+        }
+        
         isLoading = true
         errorMessage = nil
         
         do {
             // Attempt to purchase the product
+            print("⏳ Calling product.purchase()...")
             let result = try await product.purchase()
+            print("✅ Got purchase result")
             
             switch result {
             case .success(let verificationResult):
+                print("✅ Purchase succeeded, verifying transaction...")
                 // Verify the transaction
                 switch verificationResult {
                 case .verified(let transaction):
                     // Transaction verified, grant access
                     print("✅ Transaction verified: \(transaction.id)")
+                    print("   Product ID: \(transaction.productID)")
+                    print("   Purchase Date: \(transaction.purchaseDate)")
                     await transaction.finish()
                     
                     // Give StoreKit a moment to fully process before checking status
@@ -226,25 +240,57 @@ final class StoreKitManager: ObservableObject {
                     
                 case .unverified(_, let error):
                     // Transaction failed verification
+                    print("❌ Transaction verification failed: \(error)")
                     throw StoreError.verificationFailed(error)
                 }
                 
             case .userCancelled:
                 print("ℹ️ User cancelled purchase")
+                // Don't throw an error for user cancellation
                 
             case .pending:
                 print("⏳ Purchase pending (waiting for approval)")
+                self.errorMessage = "Purchase is pending approval. This may take a moment."
                 
             @unknown default:
                 print("❓ Unknown purchase result")
             }
         } catch {
-            self.errorMessage = "Purchase failed: \(error.localizedDescription)"
-            print("❌ Purchase failed: \(error)")
+            // Check for specific StoreKit errors
+            let nsError = error as NSError
+            
+            if nsError.domain == "ASDErrorDomain" || nsError.domain == "SKErrorDomain" {
+                // StoreKit specific errors
+                switch nsError.code {
+                case 2: // SKErrorPaymentCancelled
+                    print("ℹ️ Payment was cancelled")
+                    self.errorMessage = "Purchase was cancelled."
+                case 3: // SKErrorClientInvalid
+                    print("❌ Client is not allowed to make purchases")
+                    self.errorMessage = "Your device is not allowed to make purchases. Check Settings > Screen Time > Content & Privacy Restrictions."
+                case 4: // SKErrorPaymentInvalid
+                    print("❌ Payment invalid")
+                    self.errorMessage = "The purchase request was invalid."
+                case 5: // SKErrorPaymentNotAllowed
+                    print("❌ Device is not allowed to make payments")
+                    self.errorMessage = "Purchases are not allowed on this device."
+                default:
+                    print("❌ StoreKit error: \(nsError.code) - \(nsError.localizedDescription)")
+                    self.errorMessage = "Purchase failed: \(error.localizedDescription)"
+                }
+            } else {
+                self.errorMessage = "Purchase failed: \(error.localizedDescription)"
+                print("❌ Purchase failed with error: \(error)")
+                print("   Error domain: \(nsError.domain)")
+                print("   Error code: \(nsError.code)")
+                print("   Error type: \(type(of: error))")
+            }
+            
             throw error
         }
         
         isLoading = false
+        print("🛒 Purchase flow completed")
     }
     
     /// Restore previous purchases
@@ -294,6 +340,95 @@ final class StoreKitManager: ObservableObject {
             }
         }
     }
+    
+    // MARK: - Debug Helpers
+    
+    #if DEBUG
+    /// Debug: Print all current transactions and entitlements
+    func debugPrintAllTransactions() async {
+        print("\n═══════════════════════════════════════")
+        print("🔍 DEBUG: ALL TRANSACTIONS & ENTITLEMENTS")
+        print("═══════════════════════════════════════")
+        
+        print("\n📦 Current Products:")
+        for product in products {
+            print("  • \(product.id)")
+            print("    Display Name: \(product.displayName)")
+            print("    Price: \(product.displayPrice)")
+            print("    Type: \(product.type)")
+        }
+        
+        print("\n🎫 Current Entitlements:")
+        var entitlementCount = 0
+        for await result in Transaction.currentEntitlements {
+            entitlementCount += 1
+            switch result {
+            case .verified(let transaction):
+                print("  ✅ Verified Transaction #\(entitlementCount)")
+                print("     ID: \(transaction.id)")
+                print("     Product: \(transaction.productID)")
+                print("     Purchase Date: \(transaction.purchaseDate)")
+                print("     Expiration Date: \(transaction.expirationDate?.formatted() ?? "N/A")")
+                print("     Revocation Date: \(transaction.revocationDate?.formatted() ?? "N/A")")
+                print("     Original ID: \(transaction.originalID)")
+                
+                // Try to get subscription status
+                if let status = try? await transaction.subscriptionStatus {
+                    print("     Subscription State: \(status.state)")
+                    switch status.renewalInfo {
+                    case .verified(let renewalInfo):
+                        print("     Will Auto-Renew: \(renewalInfo.willAutoRenew)")
+                        print("     Renewal Date: \(renewalInfo.renewalDate?.formatted() ?? "N/A")")
+                    case .unverified(let renewalInfo, _):
+                        print("     ⚠️ Unverified Renewal Info")
+                        print("     Will Auto-Renew: \(renewalInfo.willAutoRenew)")
+                    }
+                }
+                
+            case .unverified(let transaction, let error):
+                print("  ⚠️ Unverified Transaction #\(entitlementCount)")
+                print("     ID: \(transaction.id)")
+                print("     Product: \(transaction.productID)")
+                print("     Error: \(error)")
+            }
+        }
+        
+        if entitlementCount == 0 {
+            print("  (No entitlements found)")
+        }
+        
+        print("\n📜 All Transactions:")
+        var allTransactionCount = 0
+        for await result in Transaction.all {
+            allTransactionCount += 1
+            switch result {
+            case .verified(let transaction):
+                print("  • Transaction #\(allTransactionCount)")
+                print("    Product: \(transaction.productID)")
+                print("    Date: \(transaction.purchaseDate.formatted())")
+                print("    Revoked: \(transaction.revocationDate != nil ? "Yes" : "No")")
+            case .unverified:
+                print("  • Unverified Transaction #\(allTransactionCount)")
+            }
+            
+            // Limit to first 10 to avoid spam
+            if allTransactionCount >= 10 {
+                print("  ... (showing first 10 only)")
+                break
+            }
+        }
+        
+        if allTransactionCount == 0 {
+            print("  (No transactions found)")
+        }
+        
+        print("\n📊 Current Subscription Status:")
+        print("  \(subscriptionStatus)")
+        print("  Is Active: \(subscriptionStatus.isActive)")
+        
+        print("\n═══════════════════════════════════════\n")
+    }
+    #endif
 }
 
 // MARK: - Store Error

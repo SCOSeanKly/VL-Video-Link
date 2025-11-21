@@ -11,11 +11,23 @@ import AVKit
 import AVFoundation
 import Photos
 import StoreKit
+import ZIPFoundation
 
 struct ContentView: View {
-    @State private var selectedVideo: PhotosPickerItem?
+    // Media selection
+    @State private var selectedItems: [PhotosPickerItem] = []
+    @State private var mediaType: MediaType = .none
+    
+    // Video-specific
     @State private var videoURL: URL?
     @State private var videoAsset: AVAsset?
+    @State private var player: AVPlayer?
+    
+    // Photo-specific
+    @State private var selectedPhotoURLs: [URL] = []
+    @State private var photoPreviewImages: [UIImage] = []
+    
+    // Upload states
     @State private var isUploading = false
     @State private var uploadProgress: Double = 0.0
     @State private var uploadStatus: String = ""
@@ -31,7 +43,6 @@ struct ContentView: View {
     @State private var showInstructions = false
     @State private var showHistory = false
     @StateObject private var historyService = CloudflareVideoHistoryService.shared
-    @State private var player: AVPlayer?
     @State private var isLoadingVideo = false
     @State private var showCamera = false
     @State private var showCameraPermissionAlert = false
@@ -39,13 +50,38 @@ struct ContentView: View {
     @StateObject private var storeManager = StoreKitManager.shared
     @State private var showSubscriptionPaywall = false
     
+    enum MediaType {
+        case none
+        case video
+        case singlePhoto
+        case multiplePhotos
+        
+        var displayName: String {
+            switch self {
+            case .none: return ""
+            case .video: return "Video"
+            case .singlePhoto: return "Photo"
+            case .multiplePhotos: return "Photos"
+            }
+        }
+        
+        var icon: String {
+            switch self {
+            case .none: return ""
+            case .video: return "video.fill"
+            case .singlePhoto: return "photo.fill"
+            case .multiplePhotos: return "photo.stack.fill"
+            }
+        }
+    }
+    
     var body: some View {
         ZStack {
             VStack(spacing: 20) {
                 // Header
                 ZStack {
                     VStack(spacing: 8) {
-                        if let _ = videoURL, let player = player {
+                        if mediaType == .video, let player = player {
                             // Mini video player when video is selected
                             VideoPlayer(player: player)
                                 .frame(height: 200)
@@ -62,8 +98,59 @@ struct ContentView: View {
                                 .font(.title3)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.white.opacity(0.8))
+                        } else if mediaType == .singlePhoto, let photo = photoPreviewImages.first {
+                            // Single photo preview
+                            Image(uiImage: photo)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                                .padding(EdgeInsets(top: 60, leading: 20, bottom: 12, trailing: 20))
+                            
+                            Text("Photo Preview")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white.opacity(0.8))
+                        } else if mediaType == .multiplePhotos {
+                            // Multiple photos preview (grid)
+                            VStack(spacing: 8) {
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 12) {
+                                        ForEach(Array(photoPreviewImages.prefix(5).enumerated()), id: \.offset) { index, image in
+                                            Image(uiImage: image)
+                                                .resizable()
+                                                .scaledToFill()
+                                                .frame(width: 100, height: 100)
+                                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        }
+                                        
+                                        if photoPreviewImages.count > 5 {
+                                            ZStack {
+                                                RoundedRectangle(cornerRadius: 12)
+                                                    .fill(Color.gray.opacity(0.3))
+                                                    .frame(width: 100, height: 100)
+                                                
+                                                Text("+\(photoPreviewImages.count - 5)")
+                                                    .font(.title2)
+                                                    .fontWeight(.bold)
+                                                    .foregroundStyle(.white)
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 20)
+                                }
+                                .frame(height: 100)
+                                .padding(.top, 60)
+                                .padding(.bottom, 12)
+                                
+                                Text("\(photoPreviewImages.count) Photos Selected")
+                                    .font(.title3)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.white.opacity(0.8))
+                            }
                         } else {
-                            // Show logo when no video selected
+                            // Show logo when no media selected
                             Image("vmlogo")
                                 .resizable()
                                 .frame(width: 100, height: 100)
@@ -71,12 +158,12 @@ struct ContentView: View {
                                 .shadow(color: .blue.opacity(0.2), radius: 5, x: 0, y: 4)
                                 .padding(.bottom, 20)
                             
-                            Text("Video Link")
+                            Text("Media Link")
                                 .font(.title2)
                                 .fontWeight(.bold)
                             
                             Text("""
-Tap the 'Select Video' button to choose a video from your Photos library. You can select any video you have saved on your device. 
+Tap the 'Select Media' button to choose videos or photos from your Photos library. You can select any media you have saved on your device. 
 
 We recommend using brief, concise videos to ensure optimal processing speed and quality.
 """)
@@ -150,7 +237,7 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                 }
                 .padding(.top, 40)
                 .padding(.bottom, 40)
-                .background(videoURL != nil ? Color.black : Color.white)
+                .background(mediaType != .none ? Color.black : Color.white)
                 .ignoresSafeArea(edges: .all)
               
                 // Limit reached banner - show prominently when credits exhausted
@@ -208,11 +295,11 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                     .padding(.top, 8)
                 }
               
-                // Reset button - only show when video is selected
-                if videoURL != nil || videoAsset != nil {
+                // Reset button - only show when media is selected
+                if mediaType != .none {
                     ZStack {
                         VStack(spacing: 4) {
-                            Text("Select or record a video")
+                            Text("Select or record media")
                                 .font(.body)
                                 .fontWeight(.bold)
                             
@@ -241,24 +328,27 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                 
              
                 
-                // Video selection buttons
+                // Photo/Video selection buttons
                 HStack(spacing: 12) {
                     // Photo library picker
-                    PhotosPicker(selection: $selectedVideo,
-                                matching: .videos) {
-                        Label(videoURL != nil ? "Choose New" : "Photo Library", systemImage: "photo.on.rectangle")
+                    PhotosPicker(
+                        selection: $selectedItems,
+                        maxSelectionCount: 20,
+                        matching: .any(of: [.images, .videos])
+                    ) {
+                        Label(mediaType != .none ? "Choose New" : "Photo Library", systemImage: "photo.on.rectangle")
                             .font(.headline)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(videoURL != nil ? Color.orange : Color.blue)
+                            .background(mediaType != .none ? Color.orange : Color.blue)
                             .foregroundStyle(.white)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
                     .disabled(uploadLimitManager.hasReachedLimit && !storeManager.subscriptionStatus.isActive)
                     .opacity((uploadLimitManager.hasReachedLimit && !storeManager.subscriptionStatus.isActive) ? 0.5 : 1.0)
-                    .onChange(of: selectedVideo) { oldValue, newValue in
+                    .onChange(of: selectedItems) { oldValue, newValue in
                         Task {
-                            await loadVideo()
+                            await loadMedia()
                         }
                     }
                     
@@ -312,23 +402,14 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                     .background(Color.blue.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     
-                    // Status Icon
-                    if uploadProgress < 0.5 {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                            Text("Compressing video...")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                            Text("Uploading to server...")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                    // Status Icon with dynamic message
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        
+                        Text(uploadStatus.isEmpty ? "Processing..." : uploadStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .padding(.horizontal)
@@ -381,14 +462,28 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
               
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.horizontal)
-            } else if videoURL != nil || videoAsset != nil {
+            } else if mediaType != .none {
                 VStack(spacing: 16) {
-                    // Success icon
-//                    Image(systemName: "checkmark.circle.fill")
-//                        .font(.system(size: 40))
-//                        .foregroundStyle(.green)
-//                    Text("Video selected! Configure and upload.")
-//                        .foregroundStyle(.secondary)
+                    // Media type indicator
+                    if mediaType != .none {
+                        HStack(spacing: 8) {
+                            Image(systemName: mediaType.icon)
+                                .font(.title3)
+                                .foregroundStyle(.blue)
+                            
+                            Text("\(mediaType.displayName) Selected")
+                                .font(.headline)
+                            
+                            if mediaType == .multiplePhotos {
+                                Text("(\(photoPreviewImages.count) photos)")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
                     
                     // File size info
                     if !originalSize.isEmpty {
@@ -421,21 +516,23 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
-                    // Quality picker
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Compression Quality")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        
-                        Picker("Quality", selection: $selectedQuality) {
-                            Text("Low").tag(VideoCompressionService.CompressionQuality.low)
-                            Text("Medium").tag(VideoCompressionService.CompressionQuality.medium)
-                            Text("High").tag(VideoCompressionService.CompressionQuality.high)
-                            Text("Original").tag(VideoCompressionService.CompressionQuality.original)
-                        }
-                        .pickerStyle(.segmented)
-                        .onChange(of: selectedQuality) { oldValue, newValue in
-                            updateEstimatedSize()
+                    // Quality picker (only for videos)
+                    if mediaType == .video {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Compression Quality")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            
+                            Picker("Quality", selection: $selectedQuality) {
+                                Text("Low").tag(VideoCompressionService.CompressionQuality.low)
+                                Text("Medium").tag(VideoCompressionService.CompressionQuality.medium)
+                                Text("High").tag(VideoCompressionService.CompressionQuality.high)
+                                Text("Original").tag(VideoCompressionService.CompressionQuality.original)
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: selectedQuality) { oldValue, newValue in
+                                updateEstimatedSize()
+                            }
                         }
                     }
                     
@@ -473,7 +570,6 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                 }
                 .padding()
             }
-            
             Spacer()
         }
         .alert("Error", isPresented: $showError) {
@@ -486,7 +582,7 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                 referenceNumber: $referenceNumber,
                 isPresented: $showReferencePopover,
                 onSubmit: {
-                    uploadVideo()
+                    uploadMedia()
                 }
             )
         }
@@ -561,11 +657,12 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
         }
     }
     
-    // Load video from PhotosPicker
-    private func loadVideo() async {
-        guard let selectedVideo else { return }
+    // MARK: - Media Loading
+    
+    // Load media from PhotosPicker - intelligently handles videos and photos
+    private func loadMedia() async {
+        guard !selectedItems.isEmpty else { return }
         
-        // Show loading state
         await MainActor.run {
             isLoadingVideo = true
             videoURL = nil
@@ -575,70 +672,122 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
             player = nil
             originalSize = ""
             estimatedCompressedSize = ""
+            selectedPhotoURLs = []
+            photoPreviewImages = []
         }
         
         do {
-            // First, try to load as an AVAsset directly (much faster - no copy needed)
-            if let assetIdentifier = selectedVideo.itemIdentifier {
-                // Try to get the asset from Photos library without copying
-                if let phAsset = await fetchPHAsset(for: assetIdentifier) {
-                    // Request the AVAsset from Photos framework
-                    let options = PHVideoRequestOptions()
-                    options.version = .current
-                    options.deliveryMode = .highQualityFormat
-                    options.isNetworkAccessAllowed = true
-                    
-                    let asset = await withCheckedContinuation { continuation in
-                        PHImageManager.default().requestAVAsset(forVideo: phAsset, options: options) { avAsset, audioMix, info in
-                            continuation.resume(returning: avAsset)
-                        }
-                    }
-                    
-                    if let asset = asset {
-                        // Get file size estimate
-                        let fileSize = await estimateAssetSize(asset: asset)
-                        
-                        await MainActor.run {
-                            // Create player directly from AVAsset (no file copy needed!)
-                            let newPlayer = AVPlayer(playerItem: AVPlayerItem(asset: asset))
-                            newPlayer.volume = 1.0
-                            self.player = newPlayer
-                            
-                            self.videoAsset = asset
-                            // We'll set videoURL later when we actually need to export/compress
-                            self.originalSize = ByteCountFormatter.string(fromByteCount: Int64(fileSize), countStyle: .file)
-                            self.isLoadingVideo = false
-                            updateEstimatedSize()
-                        }
-                        return
-                    }
+            // Try to determine if first item is a video or photo
+            let firstItem = selectedItems[0]
+            
+            // Try loading as video first
+            if let videoFile = try? await firstItem.loadTransferable(type: VideoFile.self) {
+                // It's a video - load as single video
+                await loadSingleVideo(item: firstItem, videoFile: videoFile)
+            } else {
+                // It's a photo/photos
+                if selectedItems.count == 1 {
+                    await loadSinglePhoto(item: firstItem)
+                } else {
+                    await loadMultiplePhotos(items: selectedItems)
                 }
             }
-            
-            // Fallback: Load the video file with copy (original method)
-            guard let movie = try await selectedVideo.loadTransferable(type: VideoFile.self) else {
-                throw VideoError.loadFailed
+        } catch {
+            await MainActor.run {
+                isLoadingVideo = false
+                errorMessage = "Failed to load media: \(error.localizedDescription)"
+                showError = true
             }
-            
-            let attributes = try FileManager.default.attributesOfItem(atPath: movie.url.path)
+        }
+    }
+    
+    // Load single video
+    private func loadSingleVideo(item: PhotosPickerItem, videoFile: VideoFile) async {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: videoFile.url.path)
             let fileSize = attributes[.size] as? Int64 ?? 0
             
             await MainActor.run {
-                let newPlayer = AVPlayer(url: movie.url)
+                let newPlayer = AVPlayer(url: videoFile.url)
                 newPlayer.volume = 1.0
                 self.player = newPlayer
                 
-                self.videoURL = movie.url
+                self.videoURL = videoFile.url
+                self.mediaType = .video
                 self.originalSize = ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
                 self.isLoadingVideo = false
                 updateEstimatedSize()
             }
         } catch {
             await MainActor.run {
-                self.isLoadingVideo = false
+                isLoadingVideo = false
                 errorMessage = "Failed to load video: \(error.localizedDescription)"
                 showError = true
             }
+        }
+    }
+    
+    // Load single photo
+    private func loadSinglePhoto(item: PhotosPickerItem) async {
+        guard let imageData = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: imageData) else {
+            await MainActor.run {
+                errorMessage = "Failed to load photo"
+                showError = true
+                isLoadingVideo = false
+            }
+            return
+        }
+        
+        // Save to temp file
+        let tempDir = FileManager.default.temporaryDirectory
+        let photoURL = tempDir.appendingPathComponent("\(UUID().uuidString).jpg")
+        
+        if let jpegData = image.jpegData(compressionQuality: 0.9) {
+            try? jpegData.write(to: photoURL)
+            
+            await MainActor.run {
+                selectedPhotoURLs = [photoURL]
+                photoPreviewImages = [image]
+                mediaType = .singlePhoto
+                originalSize = ByteCountFormatter.string(fromByteCount: Int64(jpegData.count), countStyle: .file)
+                estimatedCompressedSize = "" // No compression for single photo
+                isLoadingVideo = false
+            }
+        }
+    }
+    
+    // Load multiple photos
+    private func loadMultiplePhotos(items: [PhotosPickerItem]) async {
+        var photoURLs: [URL] = []
+        var photos: [UIImage] = []
+        var totalSize: Int64 = 0
+        
+        for (index, item) in items.enumerated() {
+            guard let imageData = try? await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: imageData) else {
+                continue
+            }
+            
+            let tempDir = FileManager.default.temporaryDirectory
+            let photoURL = tempDir.appendingPathComponent("photo_\(index + 1).jpg")
+            
+            if let jpegData = image.jpegData(compressionQuality: 0.9) {
+                try? jpegData.write(to: photoURL)
+                photoURLs.append(photoURL)
+                photos.append(image)
+                totalSize += Int64(jpegData.count)
+            }
+        }
+        
+        await MainActor.run {
+            selectedPhotoURLs = photoURLs
+            photoPreviewImages = photos
+            mediaType = .multiplePhotos
+            originalSize = ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+            // Estimate zip size at ~70% of original
+            estimatedCompressedSize = ByteCountFormatter.string(fromByteCount: Int64(Double(totalSize) * 0.7), countStyle: .file) + " (zipped)"
+            isLoadingVideo = false
         }
     }
     
@@ -710,9 +859,11 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
         }
     }
     
-    // Upload video and generate download link
-    private func uploadVideo() {
-        guard videoURL != nil || videoAsset != nil else { return }
+    // MARK: - Upload Functions
+    
+    // Upload media (video, single photo, or multiple photos) and generate download link
+    private func uploadMedia() {
+        guard mediaType != .none else { return }
         
         isUploading = true
         uploadProgress = 0.0
@@ -720,52 +871,107 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
         
         uploadTask = Task {
             do {
-                var sourceURL: URL
-                
-                // If we have AVAsset but no URL, we need to export it first
-                if let videoAsset = videoAsset, videoURL == nil {
-                    uploadStatus = "Preparing video..."
-                    sourceURL = try await exportAVAssetToFile(asset: videoAsset)
-                } else if let videoURL = videoURL {
-                    sourceURL = videoURL
-                } else {
-                    throw VideoError.loadFailed
-                }
-                
-                // Step 1: Compress the video
-                let compressionService = VideoCompressionService()
-                let compressedURL = try await compressionService.compress(
-                    videoURL: sourceURL,
-                    quality: selectedQuality
-                ) { progress, status in
-                    Task { @MainActor in
-                        // Compression is 0-50% of total progress
-                        self.uploadProgress = progress * 0.5
-                        self.uploadStatus = "🗜️ \(status)"
-                    }
-                }
-                
-                // Check for cancellation after compression
-                try Task.checkCancellation()
-                
-                // Step 2: Upload the compressed video with reference number
                 let cloudflareService = CloudflareWorkerService()
-                let link = try await cloudflareService.upload(
-                    videoURL: compressedURL,
-                    fileName: nil, // Auto-generate filename
-                    referenceNumber: referenceNumber
-                ) { progress, status in
-                    Task { @MainActor in
-                        // Upload is 50-100% of total progress
-                        self.uploadProgress = 0.5 + (progress * 0.5)
-                        self.uploadStatus = "☁️ \(status)"
-                    }
-                }
+                var link: String
                 
-                // Clean up compressed file and temporary export
-                try? FileManager.default.removeItem(at: compressedURL)
-                if videoURL == nil {
-                    try? FileManager.default.removeItem(at: sourceURL)
+                switch mediaType {
+                case .video:
+                    // Handle video upload with compression
+                    var sourceURL: URL
+                    
+                    // If we have AVAsset but no URL, export it first
+                    if let videoAsset = videoAsset, videoURL == nil {
+                        uploadStatus = "Preparing video..."
+                        sourceURL = try await exportAVAssetToFile(asset: videoAsset)
+                    } else if let videoURL = videoURL {
+                        sourceURL = videoURL
+                    } else {
+                        throw VideoError.loadFailed
+                    }
+                    
+                    // Step 1: Compress the video
+                    let compressionService = VideoCompressionService()
+                    let compressedURL = try await compressionService.compress(
+                        videoURL: sourceURL,
+                        quality: selectedQuality
+                    ) { progress, status in
+                        Task { @MainActor in
+                            // Compression is 0-50% of total progress
+                            self.uploadProgress = progress * 0.5
+                            self.uploadStatus = "🗜️ \(status)"
+                        }
+                    }
+                    
+                    // Check for cancellation after compression
+                    try Task.checkCancellation()
+                    
+                    // Step 2: Upload the compressed video
+                    link = try await cloudflareService.upload(
+                        videoURL: compressedURL,
+                        fileName: nil,
+                        referenceNumber: referenceNumber
+                    ) { progress, status in
+                        Task { @MainActor in
+                            // Upload is 50-100% of total progress
+                            self.uploadProgress = 0.5 + (progress * 0.5)
+                            self.uploadStatus = "☁️ \(status)"
+                        }
+                    }
+                    
+                    // Clean up compressed file and temporary export
+                    try? FileManager.default.removeItem(at: compressedURL)
+                    if videoURL == nil {
+                        try? FileManager.default.removeItem(at: sourceURL)
+                    }
+                    
+                case .singlePhoto:
+                    // Handle single photo upload
+                    guard let photoURL = selectedPhotoURLs.first else {
+                        throw MediaUploadError.noPhotosSelected
+                    }
+                    
+                    link = try await cloudflareService.upload(
+                        videoURL: photoURL,
+                        fileName: nil,
+                        referenceNumber: referenceNumber
+                    ) { progress, status in
+                        Task { @MainActor in
+                            self.uploadProgress = progress
+                            self.uploadStatus = "📷 \(status)"
+                        }
+                    }
+                    
+                    // Clean up temp file
+                    try? FileManager.default.removeItem(at: photoURL)
+                    
+                case .multiplePhotos:
+                    // Handle multiple photos - create zip first
+                    uploadStatus = "Creating photo archive..."
+                    
+                    let zipURL = try await createPhotoZip(photoURLs: selectedPhotoURLs)
+                    
+                    // Check for cancellation after zip creation
+                    try Task.checkCancellation()
+                    
+                    link = try await cloudflareService.upload(
+                        videoURL: zipURL,
+                        fileName: nil,
+                        referenceNumber: referenceNumber
+                    ) { progress, status in
+                        Task { @MainActor in
+                            self.uploadProgress = 0.3 + (progress * 0.7) // Zip is 0-30%, upload is 30-100%
+                            self.uploadStatus = "📦 \(status)"
+                        }
+                    }
+                    
+                    // Clean up temp files
+                    try? FileManager.default.removeItem(at: zipURL)
+                    for photoURL in selectedPhotoURLs {
+                        try? FileManager.default.removeItem(at: photoURL)
+                    }
+                    
+                case .none:
+                    throw VideoError.loadFailed
                 }
                 
                 await MainActor.run {
@@ -811,6 +1017,35 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                 }
             }
         }
+    }
+    
+    // Create a ZIP file from multiple photo URLs
+    private func createPhotoZip(photoURLs: [URL]) async throws -> URL {
+        let tempDir = FileManager.default.temporaryDirectory
+        let zipURL = tempDir.appendingPathComponent("photos_\(UUID().uuidString).zip")
+        
+        // Remove existing zip if present
+        try? FileManager.default.removeItem(at: zipURL)
+        
+        // Create archive using ZIPFoundation
+        guard let archive = Archive(url: zipURL, accessMode: .create) else {
+            throw MediaUploadError.zipCreationFailed
+        }
+        
+        // Add each photo to the zip
+        for (index, photoURL) in photoURLs.enumerated() {
+            let photoName = "photo_\(index + 1).\(photoURL.pathExtension)"
+            
+            // Add the file directly from its URL
+            try archive.addEntry(with: photoName, relativeTo: photoURL.deletingLastPathComponent())
+            
+            await MainActor.run {
+                self.uploadProgress = Double(index + 1) / Double(photoURLs.count) * 0.3
+                self.uploadStatus = "Adding photo \(index + 1) of \(photoURLs.count)..."
+            }
+        }
+        
+        return zipURL
     }
     
     // Export AVAsset to a file URL
@@ -877,10 +1112,18 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
         player?.pause()
         player = nil
         
+        // Clean up temp files
+        for photoURL in selectedPhotoURLs {
+            try? FileManager.default.removeItem(at: photoURL)
+        }
+        
         // Clear all state
         videoURL = nil
         videoAsset = nil
-        selectedVideo = nil
+        selectedItems = []
+        selectedPhotoURLs = []
+        photoPreviewImages = []
+        mediaType = .none
         downloadLink = nil
         referenceNumber = ""
         originalSize = ""
@@ -930,6 +1173,8 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
             player = nil
             originalSize = ""
             estimatedCompressedSize = ""
+            selectedPhotoURLs = []
+            photoPreviewImages = []
         }
         
         do {
@@ -943,6 +1188,7 @@ We recommend using brief, concise videos to ensure optimal processing speed and 
                 self.player = newPlayer
                 
                 self.videoURL = url
+                self.mediaType = .video
                 self.originalSize = ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
                 self.isLoadingVideo = false
                 updateEstimatedSize()
@@ -995,6 +1241,18 @@ enum VideoError: LocalizedError {
     }
 }
 
+enum MediaUploadError: LocalizedError {
+    case zipCreationFailed
+    case noPhotosSelected
+    
+    var errorDescription: String? {
+        switch self {
+        case .zipCreationFailed: return "Failed to create photo archive"
+        case .noPhotosSelected: return "No photos selected for upload"
+        }
+    }
+}
+
 // MARK: - Reference Number Input View
 struct ReferenceNumberView: View {
     @Binding var referenceNumber: String
@@ -1017,7 +1275,7 @@ struct ReferenceNumberView: View {
                         .font(.title2)
                         .fontWeight(.bold)
                     
-                    Text("Please enter a reference number for this video (e.g., Registration, Case ID)")
+                    Text("Please enter a reference number for this media (e.g., Registration, Case ID)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -1145,7 +1403,7 @@ struct InstructionsView: View {
                         }
                         .frame(width: 86, height: 86)
                          
-                        Text("Welcome to Video link")
+                        Text("Welcome to Media link")
                             .font(.title2)
                             .fontWeight(.bold)
                         

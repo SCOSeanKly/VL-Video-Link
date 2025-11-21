@@ -25,14 +25,14 @@ actor CloudflareWorkerService {
     /// Progress callback type
     typealias ProgressCallback = (Double, String) -> Void
     
-    /// Uploads a video via Cloudflare Worker and returns download URL
+    /// Uploads a file (video, photo, or zip) via Cloudflare Worker and returns download URL
     func upload(
         videoURL: URL,
         fileName: String? = nil,
         referenceNumber: String? = nil,
         progress: @escaping ProgressCallback
     ) async throws -> String {
-        progress(0.0, "Reading video file...")
+        progress(0.0, "Reading file...")
         
         let videoData = try Data(contentsOf: videoURL)
         
@@ -59,8 +59,9 @@ actor CloudflareWorkerService {
                 finalFileName = "\(fileName)_\(deviceID).\(fileExtension)"
             }
         } else {
-            // Generate UUID-based name with device ID
-            finalFileName = "\(UUID().uuidString)_\(deviceID).mp4"
+            // Generate UUID-based name with device ID - use actual file extension
+            let fileExtension = videoURL.pathExtension.isEmpty ? "mp4" : videoURL.pathExtension
+            finalFileName = "\(UUID().uuidString)_\(deviceID).\(fileExtension)"
         }
         
         print("🔍 DEBUG: Generated filename for upload: \(finalFileName)")

@@ -39,7 +39,7 @@ struct SplashScreenView: View {
                         .font(.system(size: 48, weight: .bold))
                         .foregroundStyle(.black)
                     
-                    Text("Professional Video Linker")
+                    Text("Professional Media Linker")
                         .font(.subheadline)
                         .foregroundStyle(.black.opacity(0.9))
                 }
