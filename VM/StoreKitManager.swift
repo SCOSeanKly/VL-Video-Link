@@ -42,7 +42,7 @@ final class StoreKitManager: ObservableObject {
     
     // MARK: - Product IDs
     
-    private let monthlySubscriptionID = "vl_monthly"
+    private let monthlySubscriptionID = "videoLinkMonthly"
     
     // MARK: - Private Properties
     

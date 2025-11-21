@@ -41,7 +41,7 @@ await updateSubscriptionStatus()
 Now you'll see detailed debug output:
 ```
 🔍 Checking subscription status...
-🔍 Found transaction for product: vl_monthly
+🔍 Found transaction for product: videoLinkMonthly
 ✅ Found matching subscription transaction!
 ✅ Got subscription status: subscribed
 ✅ User is subscribed
@@ -69,7 +69,7 @@ if foundTransaction {
 ✅ Transaction verified: 2000000123456789
 ⏳ Waiting for StoreKit to update entitlements...
 🔍 Checking subscription status...
-🔍 Found transaction for product: vl_monthly
+🔍 Found transaction for product: videoLinkMonthly
 ✅ Found matching subscription transaction!
 ✅ Got subscription status: subscribed
 ✅ User is subscribed (expires: Dec 20, 2025)
@@ -173,13 +173,13 @@ Settings > App Store > Sandbox Account
 
 **Check 2:** Is the subscription product ID correct?
 ```swift
-private let monthlySubscriptionID = "vl_monthly"
+private let monthlySubscriptionID = "videoLinkMonthly"
 ```
 Must match App Store Connect configuration.
 
 **Check 3:** Check console for detailed logs
 Look for:
-- "Found transaction for product: vl_monthly" ✅
+- "Found transaction for product: videoLinkMonthly" ✅
 - "No transactions found in currentEntitlements" ❌
 
 ### Issue: Subscription works in sandbox but not production

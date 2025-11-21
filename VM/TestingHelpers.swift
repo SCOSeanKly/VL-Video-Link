@@ -135,7 +135,7 @@ struct SubscriptionTestingView: View {
                 // Debug Info Section
                 Section(header: Text("Debug Information")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        InfoRow(label: "Product ID", value: "vl_monthly")
+                        InfoRow(label: "Product ID", value: "videoLinkMonthly")
                         InfoRow(label: "Free Limit", value: "5 uploads")
                         InfoRow(label: "Storage", value: "Keychain")
                         InfoRow(label: "StoreKit", value: "Version 2")

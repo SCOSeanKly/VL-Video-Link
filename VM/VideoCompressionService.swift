@@ -132,10 +132,16 @@ actor VideoCompressionService {
         // Get original dimensions and calculate output size
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
+        
+        // Calculate the DISPLAY size (accounting for rotation) for scaling purposes
+        let displaySize = naturalSize.applying(preferredTransform)
+        let adjustedSize = CGSize(width: abs(displaySize.width), height: abs(displaySize.height))
+        
+        // But use NATURAL size for output dimensions (writer will handle rotation via transform)
         let outputSize = calculateOutputSize(
-            from: naturalSize,
-            transform: preferredTransform,
-            maxDimension: quality.maxDimension
+            from: naturalSize,  // Use naturalSize, not transformed size
+            maxDimension: quality.maxDimension,
+            displaySize: adjustedSize  // But scale based on display size
         )
         
         progress(0.1, "Preparing compression...")
@@ -166,9 +172,8 @@ actor VideoCompressionService {
         let videoWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         videoWriterInput.expectsMediaDataInRealTime = false
         
-        // Handle video orientation
-        let transform = try await videoTrack.load(.preferredTransform)
-        videoWriterInput.transform = transform
+        // Handle video orientation - this tells the video player how to display it
+        videoWriterInput.transform = preferredTransform
         
         writer.add(videoWriterInput)
         
@@ -324,27 +329,26 @@ actor VideoCompressionService {
     
     private func calculateOutputSize(
         from naturalSize: CGSize,
-        transform: CGAffineTransform,
-        maxDimension: CGFloat
+        maxDimension: CGFloat,
+        displaySize: CGSize
     ) -> CGSize {
-        // Apply transform to get actual display size
-        var size = naturalSize.applying(transform)
-        size.width = abs(size.width)
-        size.height = abs(size.height)
+        // Use the display size (after rotation) to determine if scaling is needed
+        let maxDisplaySize = max(displaySize.width, displaySize.height)
         
-        // Calculate scaling
-        let maxSize = max(size.width, size.height)
-        if maxSize > maxDimension {
-            let scale = maxDimension / maxSize
-            size.width *= scale
-            size.height *= scale
+        var outputSize = naturalSize
+        
+        // Only scale down if necessary
+        if maxDisplaySize > maxDimension {
+            let scale = maxDimension / maxDisplaySize
+            outputSize.width *= scale
+            outputSize.height *= scale
         }
         
-        // Round to even numbers (required for H.264)
-        size.width = floor(size.width / 2) * 2
-        size.height = floor(size.height / 2) * 2
+        // Round to even numbers (required for H.264 encoding)
+        outputSize.width = floor(outputSize.width / 2) * 2
+        outputSize.height = floor(outputSize.height / 2) * 2
         
-        return size
+        return outputSize
     }
     
     private func formatFileSize(_ bytes: Int64) -> String {
