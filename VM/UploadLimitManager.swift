@@ -22,8 +22,8 @@ final class UploadLimitManager: ObservableObject {
     // MARK: - Constants
     
     private let freeUploadLimit = 5
-    private let keychainService = "com.videolink.upload-count2"
-    private let keychainAccount = "upload-counter2"
+    private let keychainService = "com.videolink.upload-count3"
+    private let keychainAccount = "upload-counter3"
     
     // MARK: - Computed Properties
     

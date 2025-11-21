@@ -674,24 +674,10 @@ struct VideoPlayerOverlay: View {
                 // Video player
                 if let player = player {
                     VideoPlayer(player: player)
-                        .frame(maxHeight: UIScreen.main.bounds.height * 0.8)
+                        .frame(maxHeight: UIScreen.main.bounds.height * 0.6)
+                        .aspectRatio(contentMode: .fill)
                         .background(Color.black)
                         .clipShape(RoundedRectangle(cornerRadius: 16))
-                } else {
-                    // Loading state
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .tint(.white)
-                        
-                        Text("Loading video...")
-                            .font(.subheadline)
-                            .foregroundStyle(.white)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 400)
-                    .background(Color.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
                 }
                 
                 // Close button overlay
@@ -708,7 +694,7 @@ struct VideoPlayerOverlay: View {
             .shadow(radius: 20)
             .padding(.horizontal, 20)
         }
-        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        .transition(.opacity.combined(with: .scale(scale: 0.6)))
         .animation(.spring(response: 0.3), value: isPresented)
         .onAppear {
             setupPlayer()
