@@ -257,7 +257,7 @@ struct UploadHistoryView: View {
                     .scaleEffect(1.5)
                     .tint(.primary)
                 
-                Text(selectedVideos.count > 1 ? "Deleting \(selectedVideos.count) videos..." : "Deleting video...")
+                Text(selectedVideos.count > 1 ? "Deleting \(selectedVideos.count) videos..." : "Deleting...")
                     .font(.headline)
                     .foregroundStyle(.primary)
                 
@@ -872,18 +872,14 @@ struct ImagePreviewSheet: View {
                         .buttonStyle(.bordered)
                     }
                 } else if let image = image {
-                    ScrollView([.horizontal, .vertical], showsIndicators: false) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    GeometryReader { geometry in
+                        ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: geometry.size.width)
+                        }
                     }
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                // Zoom gesture support
-                            }
-                    )
                 }
             }
             .navigationTitle("Photo Preview")
@@ -896,9 +892,11 @@ struct ImagePreviewSheet: View {
                     .foregroundStyle(.white)
                 }
                 
-                if !isLoading && !loadError {
+                if !isLoading && !loadError, let image = image {
                     ToolbarItem(placement: .primaryAction) {
-                        ShareLink(item: imageURL) {
+                        Button(action: {
+                            shareImage(image)
+                        }) {
                             Image(systemName: "square.and.arrow.up")
                                 .foregroundStyle(.white)
                         }
@@ -916,19 +914,33 @@ struct ImagePreviewSheet: View {
     
     private func loadImage() async {
         guard let url = URL(string: imageURL) else {
-            loadError = true
-            isLoading = false
+            await MainActor.run {
+                loadError = true
+                isLoading = false
+            }
+            print("❌ Invalid image URL: \(imageURL)")
             return
         }
         
+        print("🔍 Loading image from: \(imageURL)")
+        
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            print("✅ Downloaded \(data.count) bytes")
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📊 HTTP Status: \(httpResponse.statusCode)")
+                print("📊 Content-Type: \(httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "unknown")")
+            }
             
             await MainActor.run {
                 if let downloadedImage = UIImage(data: data) {
+                    print("✅ Successfully created UIImage")
                     self.image = downloadedImage
                     self.loadError = false
                 } else {
+                    print("❌ Failed to create UIImage from data")
                     self.loadError = true
                 }
                 self.isLoading = false
@@ -940,6 +952,32 @@ struct ImagePreviewSheet: View {
             }
             print("❌ Failed to load image: \(error)")
         }
+    }
+    
+    private func shareImage(_ image: UIImage) {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first else {
+            print("❌ Could not find window for share sheet")
+            return
+        }
+        
+        let activityVC = UIActivityViewController(
+            activityItems: [image, imageURL],
+            applicationActivities: nil
+        )
+        
+        // For iPad support
+        activityVC.popoverPresentationController?.sourceView = window
+        activityVC.popoverPresentationController?.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 0, height: 0)
+        activityVC.popoverPresentationController?.permittedArrowDirections = []
+        
+        // Find the topmost view controller
+        var topController = window.rootViewController
+        while let presentedViewController = topController?.presentedViewController {
+            topController = presentedViewController
+        }
+        
+        topController?.present(activityVC, animated: true)
     }
 }
 

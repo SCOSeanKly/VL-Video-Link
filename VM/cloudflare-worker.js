@@ -95,18 +95,9 @@ export default {
       const originalFileName = file.name || 'upload';
       const fileExt = originalFileName.split('.').pop() || 'bin';
       
-      // Generate filename with device ID if provided
+      // Generate unique filename with collision detection
       const sanitizedReference = reference.trim().replace(/[^a-zA-Z0-9-_]/g, '-');
-      const timestamp = Date.now();
-      const randomId = crypto.randomUUID().substring(0, 8);
-      
-      // Include device ID in filename if provided
-      let fileName;
-      if (deviceId && deviceId.trim() !== '') {
-        fileName = `${sanitizedReference}-${timestamp}-${randomId}_${deviceId.trim()}.${fileExt}`;
-      } else {
-        fileName = `${sanitizedReference}-${timestamp}-${randomId}.${fileExt}`;
-      }
+      const fileName = await generateUniqueFileName(env, sanitizedReference, deviceId, fileExt);
       
       console.log(`📁 Generated filename: ${fileName} (extension: ${fileExt})`);
 
@@ -355,6 +346,38 @@ async function handleDeleteVideo(fileId, env, corsHeaders) {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
+}
+
+// ============= HELPER: GENERATE UNIQUE FILENAME =============
+async function generateUniqueFileName(env, sanitizedReference, deviceId, fileExt) {
+  // Build base filename
+  const deviceSuffix = (deviceId && deviceId.trim() !== '') ? `_${deviceId.trim()}` : '';
+  const baseFileName = `${sanitizedReference}${deviceSuffix}.${fileExt}`;
+  
+  // Check if base filename exists
+  const existingFile = await env.VIDEO_BUCKET.head(baseFileName);
+  if (!existingFile) {
+    console.log(`✅ Using base filename: ${baseFileName}`);
+    return baseFileName;
+  }
+  
+  // File exists, find next available number
+  console.log(`⚠️ Collision detected for ${baseFileName}, finding next available...`);
+  let counter = 2;
+  while (counter < 1000) { // Safety limit to prevent infinite loops
+    const numberedFileName = `${sanitizedReference}-${counter}${deviceSuffix}.${fileExt}`;
+    const exists = await env.VIDEO_BUCKET.head(numberedFileName);
+    if (!exists) {
+      console.log(`✅ Using numbered filename: ${numberedFileName}`);
+      return numberedFileName;
+    }
+    counter++;
+  }
+  
+  // Fallback to UUID if we somehow hit 1000 collisions
+  const fallbackFileName = `${sanitizedReference}-${crypto.randomUUID().substring(0, 8)}${deviceSuffix}.${fileExt}`;
+  console.log(`⚠️ Too many collisions, using UUID fallback: ${fallbackFileName}`);
+  return fallbackFileName;
 }
 
 function formatBytes(bytes) {

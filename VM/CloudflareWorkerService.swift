@@ -40,31 +40,19 @@ actor CloudflareWorkerService {
         let deviceID = DeviceIdentifierService.shared.shortDeviceIdentifier
         print("🔍 DEBUG: Device ID for upload: \(deviceID)")
         
+        // Use provided filename or generate a simple one
+        // Note: Worker will handle collision detection and add device ID
         let finalFileName: String
         
         if let fileName = fileName, !fileName.isEmpty {
-            // Use provided filename and ensure it has extension
-            let fileExtension = videoURL.pathExtension.isEmpty ? "mp4" : videoURL.pathExtension
-            if fileName.contains(".") {
-                // Insert device ID before extension
-                let components = fileName.split(separator: ".")
-                if components.count > 1 {
-                    let nameWithoutExt = components.dropLast().joined(separator: ".")
-                    let ext = components.last!
-                    finalFileName = "\(nameWithoutExt)_\(deviceID).\(ext)"
-                } else {
-                    finalFileName = "\(fileName)_\(deviceID).\(fileExtension)"
-                }
-            } else {
-                finalFileName = "\(fileName)_\(deviceID).\(fileExtension)"
-            }
+            finalFileName = fileName
         } else {
-            // Generate UUID-based name with device ID - use actual file extension
+            // Simple fallback filename with extension
             let fileExtension = videoURL.pathExtension.isEmpty ? "mp4" : videoURL.pathExtension
-            finalFileName = "\(UUID().uuidString)_\(deviceID).\(fileExtension)"
+            finalFileName = "upload.\(fileExtension)"
         }
         
-        print("🔍 DEBUG: Generated filename for upload: \(finalFileName)")
+        print("🔍 DEBUG: Filename for upload: \(finalFileName)")
         print("🔍 DEBUG: Reference number: \(referenceNumber ?? "nil")")
         
         progress(0.1, "Preparing upload...")
