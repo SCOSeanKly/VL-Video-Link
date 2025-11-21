@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AVKit
 
 struct UploadHistoryView: View {
     @Environment(\.dismiss) private var dismiss
@@ -21,6 +22,10 @@ struct UploadHistoryView: View {
     @State private var isEditMode = false
     @State private var selectedVideos: Set<String> = []
     @State private var showBulkDeleteConfirmation = false
+    
+    // Video player overlay
+    @State private var showVideoPlayer = false
+    @State private var videoToPlay: String?
     
     private var filteredVideos: [CloudflareVideo] {
         historyService.search(query: searchText)
@@ -117,6 +122,11 @@ struct UploadHistoryView: View {
                 // Delete progress overlay
                 if isDeleting {
                     deleteProgressOverlay
+                }
+                
+                // Video player overlay
+                if showVideoPlayer, let videoURL = videoToPlay {
+                    VideoPlayerOverlay(videoURL: videoURL, isPresented: $showVideoPlayer)
                 }
             }
             .navigationTitle("Upload History")
@@ -441,6 +451,10 @@ struct UploadHistoryView: View {
                             onDelete: {
                                 videoToDelete = video
                                 showDeleteConfirmation = true
+                            },
+                            onPlay: {
+                                videoToPlay = video.downloadURL
+                                showVideoPlayer = true
                             }
                         )
                     } else {
@@ -452,6 +466,10 @@ struct UploadHistoryView: View {
                             onDelete: {
                                 videoToDelete = video
                                 showDeleteConfirmation = true
+                            },
+                            onPlay: {
+                                videoToPlay = video.downloadURL
+                                showVideoPlayer = true
                             }
                         )
                     }
@@ -478,6 +496,7 @@ struct CloudflareVideoRow: View {
     let isSelected: Bool
     let onToggleSelection: () -> Void
     let onDelete: () -> Void
+    let onPlay: () -> Void // NEW: Callback for play button
     
     @State private var showShareSheet = false
     
@@ -497,9 +516,23 @@ struct CloudflareVideoRow: View {
                 // Header with reference and date
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(video.reference)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
+                        HStack(spacing: 12) {
+                            Text(video.reference)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                            
+                            Spacer()
+                            
+                            // Play button
+                            Button(action: {
+                                onPlay()
+                            }) {
+                                Image(systemName: "play.circle.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(.blue)
+                            }
+                            .buttonStyle(.plain)
+                        }
                         
                         HStack(spacing: 4) {
                             Image(systemName: "clock")
@@ -509,8 +542,6 @@ struct CloudflareVideoRow: View {
                         }
                         .foregroundStyle(.secondary)
                     }
-                    
-                    Spacer()
                 }
                 
                 // File info
@@ -617,6 +648,95 @@ struct CloudflareVideoRow: View {
         }
         
         topController?.present(activityVC, animated: true)
+    }
+}
+
+// MARK: - Video Player Overlay
+
+struct VideoPlayerOverlay: View {
+    let videoURL: String
+    @Binding var isPresented: Bool
+    @State private var player: AVPlayer?
+    
+    var body: some View {
+        ZStack {
+            // Semi-transparent background
+            Color.black.opacity(0.7)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    // Close when tapping outside
+                    player?.pause()
+                    isPresented = false
+                }
+            
+            // Video player container
+            ZStack(alignment: .topTrailing) {
+                // Video player
+                if let player = player {
+                    VideoPlayer(player: player)
+                        .frame(maxHeight: UIScreen.main.bounds.height * 0.8)
+                        .background(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                } else {
+                    // Loading state
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.white)
+                        
+                        Text("Loading video...")
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 400)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+                
+                // Close button overlay
+                Button(action: {
+                    player?.pause()
+                    isPresented = false
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                }
+                .padding()
+            }
+            .shadow(radius: 20)
+            .padding(.horizontal, 20)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        .animation(.spring(response: 0.3), value: isPresented)
+        .onAppear {
+            setupPlayer()
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+    }
+    
+    private func setupPlayer() {
+        guard let url = URL(string: videoURL) else {
+            print("❌ Invalid video URL: \(videoURL)")
+            return
+        }
+        
+        player = AVPlayer(url: url)
+        player?.play()
+        
+        // Optional: Loop video
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player?.currentItem,
+            queue: .main
+        ) { _ in
+            player?.seek(to: .zero)
+            player?.play()
+        }
     }
 }
 
